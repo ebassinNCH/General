@@ -1,10 +1,11 @@
-import feather
 import pandas as pd
 import numpy as np
 import os
 from time import ctime
 import xlsxwriter
-
+import feather
+import pymysql
+from sqlalchemy import create_engine
 
 # the first two functions are my simplified methods for reading and writing dataframes in feather format.
 def Use(fn):
@@ -29,9 +30,12 @@ def Save(df, fn):
     :return: None
     '''
     if fn.endswith('.feather')==True:
+        #df.to_feather(fn)
         feather.write_dataframe(df, fn)
     else:
         feather.write_dataframe(df, fn + '.feather')
+        #df.to_feather(fn + '.feather')
+    print('  Saved file ' + fn + ': ' + ctime())
     return
 
 
@@ -656,3 +660,8 @@ def fewSpreadsheets(DF, workbook, sheet, title, notes, WSA,
             c=0
             r+=20
     print(sheet + ' written at ' + ctime())
+
+def toMySQL(df, schema, table):
+    engine = create_engine('mysql+pymysql://ebassin:117Sutton@localhost:3306/' + schema)
+    df.to_sql(name=table, con=engine, if_exists='replace', index=False)
+    return
