@@ -662,6 +662,8 @@ def fewSpreadsheets(DF, workbook, sheet, title, notes, WSA,
     print(sheet + ' written at ' + ctime())
 
 def toMySQL(df, schema, table):
+    print('  Starting writing table ' + schema + '.' + table + ' at ' + ctime())
     engine = create_engine('mysql+pymysql://ebassin:117Sutton@localhost:3306/' + schema)
     df.to_sql(name=table, con=engine, if_exists='replace', index=False)
+    print('  Finished writing table ' + schema + '.' + table + ' at ' + ctime())
     return
