@@ -18,9 +18,13 @@ def Use(fn):
     try:
         df = feather.read_dataframe(fn)
     except:
-        df = feather.read_dataframe(fn + '.feather')
+        try:
+            df = feather.read_dataframe(fn + '.feather')
+        except:
+            df = pd.read_hdf(fn + '.h5', 'df')
     return df
 
+	
 def Save(df, fn):
     '''
     Write a feather dataframe
@@ -29,12 +33,10 @@ def Save(df, fn):
     :param fn: the file name, optionally including the path
     :return: None
     '''
-    if fn.endswith('.feather')==True:
-        #df.to_feather(fn)
-        feather.write_dataframe(df, fn)
+    if len(df.index) <= 50000:
+        feather.write_dataframe(df, fn+'.feather')
     else:
-        feather.write_dataframe(df, fn + '.feather')
-        #df.to_feather(fn + '.feather')
+        df.to_hdf(fn+'.h5', 'df', complevel=5, append=False, format='table', data_columns=True)
     print('  Saved file ' + fn + ': ' + ctime())
     return
 
@@ -197,7 +199,18 @@ def RenameVars(df):
                'REV_CNTR_PTNT_RSPNSBLTY_PMT': 'LinePatientPaid',
                'REV_CNTR_PMT_AMT_AMT': 'LinePaid',
                'clm_rev_std_pymt_amt': 'LineStandardPay',
-               'CLM_REV_STD_PYMT_AMT': 'LineStandardPay'}
+               'CLM_REV_STD_PYMT_AMT': 'LineStandardPay',
+               # Start LDS fields here
+               'DESY_SORT_KEY': 'BeneSK',
+               'CLAIM_NO': 'ClaimNo',
+               'DOB_DT': 'BirthDate',
+               'GNDR_CD': 'Sex',
+               'BENE_RACE_CD': 'Race',
+               'BENE_TOT_COINSRNC_DAYS_CNT': 'CoinsDays',
+               'CLM_NON_UTLZTN_DAYS_CNT': 'NonUtilDays',
+               'NCH_IP_NCVRD_CHRG_AMT': 'NonCoveredCharges',
+               'CLM_HHA_LUPA_IND_CD': 'LUPAIndicator',
+               'CLM_HHA_RFRL_CD': 'HHAReferralCode'}
     df.rename(columns = dictRen, inplace=True)
     dictOCMQuarterly = dict(QTR_START_DATE='QuarterStartDate', EM_VISITS='EMVisitsYou',
                             EM_VISITS_ALL='EMVisitsAllProviders', CHEMO_DATE='ChemoStartDate',
@@ -661,6 +674,7 @@ def fewSpreadsheets(DF, workbook, sheet, title, notes, WSA,
             r+=20
     print(sheet + ' written at ' + ctime())
 
+	
 def toMySQL(df, schema, table):
     print('  Starting writing table ' + schema + '.' + table + ' at ' + ctime())
     engine = create_engine('mysql+pymysql://ebassin:117Sutton@localhost:3306/' + schema)
