@@ -9,7 +9,7 @@ import numpy as np
 import os
 os.chdir(OutputDir)
 import sys
-sys.path.append('c:/Gode/General)
+sys.path.append('c:/Gode/General')
 from NCHGeneral import *
 
 
@@ -176,6 +176,14 @@ readCCSCPT()
 #########################
 ## CPT and HCPCS Codes ##
 #########################
+# This is one of the most complicated table loads in the reference database.  It first gets the Medicare Coverage
+# Database procedures file.  That file includes the history of each code, so we need to keep the latest version of
+# each code.  In addition, I merge this file the CCS crosswalks to make it much easier and faster to get the CCS
+# Procedure Groups onto the claims.  NOTE THAT THIS TABLE IS INCOMPLETE. It does not contain many CPT/HCPCS codes.
+
+# Source: https://www.cms.gov/medicare-coverage-database/downloads/downloadable-databases.aspx  On that page, you need
+# to select "Current LDCs"  That will download a zip file that contains a zip archive within it.  Open the zip
+# archive and get the needed file.
 def readCPT():
     df = pd.read_csv(InputDir + '/lcd_x_hcpc_code.csv', delimiter=',', quotechar='"',
                      dtype={'last_updated': 'str',
@@ -185,6 +193,12 @@ def readCPT():
     for c in df.columns.tolist():
         if c[:3]=='del':
             del df[c]
+    df['CPT'] = df.CPT.apply(lambda x: x.replace('Pet ', 'PET '))
+    df['CPT'] = df.CPT.apply(lambda x: x.replace('Mri ', 'MRI '))
+    df['CPT'] = df.CPT.apply(lambda x: x.replace('Ct ', 'CT '))
+    df['CPT'] = df.CPT.apply(lambda x: x.replace('w/ct ', 'w/CT '))
+    df['CPT'] = df.CPT.apply(lambda x: x.replace('Srs ', 'SRS '))
+    df['CPT'] = df.CPT.apply(lambda x: x.replace('Us ', 'US '))
     df.sort_values(['CPT', 'LastUpdate'], inplace=True)
     del df['LastUpdate']
     df = df.groupby('CPT').last().reset_index()
@@ -219,6 +233,62 @@ def readCPT():
     df = df[['CPT', 'CPT_lbl']]
     Save(df, OutputDir + 'code_CPT')
 readCPT()
+
+################################################
+## CPT/HCPCS and RVUs and related information ##
+################################################
+# After trying the previous approach, I found a different way to get the CPT codes, by downloading the physician fee
+# schedule files.  This function reads that dataset (which is an ugly mess) and extracts both an RVU file and the CPT
+# mapping files that we need.  It uses the same logic as the prior file to add CCSProc to the CPT codes.
+# Source:
+#    https://www.cms.gov/Medicare/Medicare-Fee-for-Service-Payment/PhysicianFeeSched/PFS-Relative-Value-Files-Items/RVU17C.html?DLPage=1&DLEntries=10&DLSort=0&DLSortDir=descending
+def readRVU():
+    df = pd.read_fwf(InputDir + 'PPRRVU17_JULY_V0503.txt', skiprows=7, header=None,
+                     widths=(5,2,50,1,7,7,2,7,2,6,7,6,1,3,3,3,3,1,1,1,1,1,7,5,8,1,2,1,1,2,10,7,6),
+                     names=['CPT', 'CPTMod', 'CPT_lbl', 'StatusCode', 'WorkRVU', 'NonFacilityExpenseRVU',
+                            'NonFacilityNA', 'FacilityExpenseRVU', 'FacilityNA', 'MalpracticeRVU',
+                            'TotalNonFacilityRVU', 'TotalFacilityRVU', 'PC_TCIndicator', 'GlobalSurgery',
+                            'PreOpPct', 'IntraOpPct', 'PostOpPct', 'MultiProcFlag', 'BilateralSurgFlag',
+                            'AsstSurgeonFlag', 'CoSurgeonFlag', 'TeamSurgeryFlag', 'Filler',
+                            'EndoscopicBaseCode', 'ConversionFactor', 'del1', 'PhysSupervision', 'del2',
+                            'DiagImagingFamily', 'NonFacPracticeAmt', 'FacilityPracticeAmt',
+                            'MalpracticeAmt', 'del4'])
+    for c in df.columns.tolist():
+        if c[:3]=='del':
+            del df[c]
+    df['CPT'] = df.CPT.astype('str')
+    Save(df, OutputDir + 'ref_RVU')
+    df = df[['CPT', 'CPT_lbl']]
+    df.drop_duplicates(subset='CPT', inplace=True)
+    Save(df, OutputDir + 'code_CPT')
+    import sqlite3
+    #Import the xwalk file
+    xw = Use('c:/AdvAnalytics/Reference/ref_CCSProcs')
+    xw = xw[['CodeRangeStart', 'CodeRangeEnd', 'CCSProc']]
+    # Prep the CPT dataframe
+    df['RowID'] = range(len(df))
+    dfw = df[['RowID', 'CPT']]
+    # Create the db in memory
+    conn = sqlite3.connect(':memory:')
+    # Put the tables into the memory db
+    xw.to_sql('xw', conn, index=False)
+    dfw.to_sql('df', conn, index=False)
+    qry = '''
+        SELECT df.RowID, xw.CCSProc
+        FROM df, xw
+        WHERE df.CPT between xw.CodeRangeStart and xw.CodeRangeEnd
+        '''
+    print('Starting query at ' + ctime())
+    dfres = pd.read_sql_query(qry, conn)
+    print('Finished query at ' + ctime())
+    df = pd.merge(df, dfres, on='RowID', how='left')
+    del df['RowID']
+    df.CCSProc.fillna(-1, inplace=True)
+    df['CCSProc']=df.CCSProc.astype('int16')
+    Save(df, OutputDir + 'ref_CPT')
+    dfx = df[['CPT', 'CCSProc']]
+    Save(dfx, OutputDir + 'xw_CPT2CCSProc')
+readRVU()
 
 ##########################
 ## ICD to HCC Crosswalk ##
@@ -275,7 +345,7 @@ df = HCCLabels()
 
 # ## HCC List
 # This code generates a list of HCC codes with a flag indicating if the code is used in OCM.  
-dfhcc = df.copy())
+dfhcc = df.copy()
 df = pd.read_excel('c:/AdvAnalytics/OCM/Reference/Input/ocm-predictionmodel-codelist.xlsx',
                   sheetname='ComorbidityFlags', skiprows=2)
 df.columns=['HCC', 'Description']
@@ -522,7 +592,7 @@ readGem()
 # https://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets/Alpha-Numeric-HCPCS.html.
 # I copied and pasted the section with the BETOS codes to LibreOffice, then read them below.
 # I found a newer, better crosswalk/rollup at this site.
-# https://www.reddit.com/r/healthIT/comments/44b8f4/berenson_eggers_type_of_service_betos_codes/
+# https://www.reddit.com/r/healthIT/comments/44b8f4/berenson_eggers_type_of_service_betos_codes/ 
 def readBETOS():
     df = pd.read_table(InputDir + 'betpuf14.txt', delim_whitespace=True, header=None,
                        names=['CPT', 'BETOS'], dtype={'CPT': 'str'})
@@ -571,7 +641,7 @@ readHCFASpec()
 ## Revenue Center (Revenue Code) Codes ##
 #########################################
 # These descriptions come from http://www.resdac.org/sites/resdac.org/files/Revenue%20Center%20Table.txt
-def readRevCode()
+def readRevCode():
     df1 = pd.read_table(InputDir + 'RevCodes.txt', header=None, names=['x'])
     df = pd.DataFrame(df1.x.str.split(' = ',1).tolist(),
                                        columns = ['RevenueCode', 'RevenueCode_lbl'])
@@ -612,7 +682,7 @@ def readDartmouth():
     df['HRR_lbl'] = df.HRR_lbl.apply(lambda x : str(x))
     df1 = df[['HRR', 'HRR_lbl']]
     df1.drop_duplicates(inplace=True)
-    Save(df1 OutputDir + '/code_HRR')
+    Save(df1, OutputDir + '/code_HRR')
     df1 = df[['HSA', 'HSA_lbl']]
     df1.drop_duplicates(inplace=True)
     Save(df1, OutputDir + '/code_HSA')
@@ -825,3 +895,67 @@ def readMediSpan():
     df = pd.read_sql_query(myQuery, engine)
     Save(df, OutputDir + 'ref_NDCPrice')
 readMediSpan()
+
+
+## FIPS County files are found at https://www.census.gov/geo/reference/codes/cou.html.  They need to be copied to a
+## text file and column headers need to be added.
+def readFIPS():
+    df = pd.read_csv('/AdvAnalytics/Reference/RawData/FIPSCodes.csv',
+                     dtype={'FIPSCounty': 'str'})
+    Save(df, '/AdvAnalytics/Reference/ref_FIPS')
+    dfx = df[['FIPSCounty', 'CountyName']]
+    dfx.rename(columns={'CountyName': 'FIPSCounty_lbl'})
+    Save(dfx, '/AdvAnalytics/Reference/code_FIPSCounty')
+    toMySQL(dfx, 'reference', 'code_FIPSCounty')
+readFIPS()
+
+## Zip code crosswalks are found at: https://www.huduser.gov/portal/datasets/usps_crosswalk.html#data.
+def prepZipCodes():
+    df = pd.read_excel(InputDir + '/Zip_County_062017.xlsx')
+    df.sort_values(['ZIP', 'TOT_RATIO'], inplace=True)
+    df.columns = ['ZipCode', 'County', 'PctResidentialAddress', 'PctBusinessAddress', 'PctOtherAddress',
+                  'PctTotalAddress']
+    print(len(df.index))
+    df = df.groupby('ZipCode').last().reset_index()
+    print(len(df.index))
+    Save(df, OutputDir + '/ref_ZipCodeCounty')
+    df = df[['ZipCode', 'County']]
+    Save(df, OutputDir + '/xw_ZipCode2County')
+prepZipCodes()
+
+
+def prepRegimenXW():
+    import pyodbc
+    conn = pyodbc.connect('DRIVER={SQL Server};SERVER=BIDATACA2;DATABASE=EDW;UID=ebassin;\
+                           PWD=ebassin;Trusted_Connection=yes')
+    myQuery = '''
+        SELECT
+            X.RegimenSK as Regimen,
+            R.RegimenDescription as Regimen_lbl,
+            M.BillingCode as CPT,
+            M.BrandName,
+            M.MedicationTypeName,
+            X.RegimenMedicationOrder 
+        FROM
+            EDW.DIM.Medication as M,
+            EDW.DIM.Regimen as R,
+            EDW.DIM.RegimenMedication as X
+        WHERE
+            M.MedicationSK = X.MedicationSK 
+            And R.RegimenSK = X.RegimenSK
+            And X.RegimenMedicationType = 'Required'
+            '''
+    df = pd.read_sql(myQuery, conn)
+    df.loc[df.CPT=='J9999', 'CPT'] = df.BrandName.apply(lambda x: x[:5].upper())
+    Save(df, '/AdvAnalytics/OCM/Reference/ref_regimenDetails')
+    df1 = df[['CPT', 'Regimen', 'RegimenMedicationOrder']].copy()
+    df1.drop_duplicates(inplace=True)
+    Save(df1, '/AdvAnalytics/OCM/Reference/xw_CPT2Regimen')
+    df1 = df[['Regimen', 'RegimenMedicationOrder']].copy()
+    df1 = df1.groupby('Regimen').max()
+    df1.reset_index(inplace=True)
+    df1.rename(columns={'RegimenMedicationOrder': 'DrugCount'}, inplace=True)
+    Save(df1, '/AdvAnalytics/OCM/Reference/info_RegimenDrugCount')
+    df = df[['Regimen', 'Regimen_lbl']].drop_duplicates()
+    Save(df, '/AdvAnalytics/OCM/Reference/code_regimen')
+prepRegimenXW()
