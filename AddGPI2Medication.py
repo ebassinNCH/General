@@ -8,9 +8,6 @@ from time import sleep
 sys.path.append('c:/code/general')
 from NCHGeneral import Use, Save, fewSpreadsheets, postAgg, getFN, RenameVars, toMySQL
 from NCHGeneral import *
-pd.options.mode.chained_assignment = None  # default='warn'
-import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
 
 '''
 conn = pyodbc.connect('DRIVER={SQL Server};SERVER=BIDATACA2;DATABASE=EDW;UID=ebassin;\
@@ -95,15 +92,21 @@ xw = xw.groupby('BillingCode').first().reset_index()
 dfm = Use('c:/temp/MedicationTable')
 dfm = dfm[dfm.GenericName!='N/A']
 dfg = Use('c:/temp/GPI10')
+for c in ['Drug_Base_Name', 'Drug_Name_Extension']:
+    dfg[c] = dfg[c].apply(lambda x: str(x))
 dfg = dfg[pd.notnull(dfg.GPI10)]
 # Extract a table of the Carepro medications where the HCPCS code might be used for matching.
 dfmj = dfm[~dfm.BillingCode.isin(['J8999', 'J9999'])]
 dfg['LenExt'] = dfg.Drug_Name_Extension.apply(lambda x: len(x))
 dfg = dfg[dfg.LenExt>1]
 listDrugs = dfm.GenericName.tolist()
+print(listDrugs)
 for drug in listDrugs:
+    if drug=='NA FERRIC GLUCONATE':
+        drug='SODIUM FERRIC GLUCONATE'
     detectionType='Full Drug Name'
     HCPCS = ''
+    print(drug)
     dfw = dfg[dfg.Drug_Name_Extension.apply(lambda x: x in drug)]
     print('  Number of rows in the Drug Name Extension df for ' + drug + ': {:,}'.format(len(dfw.index)))
     # HCPCS code method
@@ -133,13 +136,16 @@ for drug in listDrugs:
         drugName = 'No Match Found'
         shortName = 'No Match Found'
         gpi = 'N/A'
+        f.write(drug + '\t' + gpi + '\t' + str(detectionType) + '\t' + drugName + '\t' + shortName + '\t' + HCPCS + '\n')
     else:
         dfw.sort_values('LenExt', ascending=False, inplace=True)
         dfw.reset_index(inplace=True)
-        drugName = dfw.Drug_Name_Extension[0]
-        shortName = dfw.Drug_Base_Name[0]
-        gpi = dfw.GPI10[0]
-    f.write(drug + '\t' + gpi + '\t' + str(detectionType) + '\t' + drugName + '\t' + shortName + '\t' + HCPCS + '\n')
+        rows = len(dfw.index)
+        for r in range(rows):
+            drugName = dfw.Drug_Name_Extension[r]
+            shortName = dfw.Drug_Base_Name[r]
+            gpi = dfw.GPI10[r]
+            f.write(drug + '\t' + gpi + '\t' + str(detectionType) + '\t' + drugName + '\t' + shortName + '\t' + HCPCS + '\n')
 f.close()
 
 # Write the results to an Excel file for review.
